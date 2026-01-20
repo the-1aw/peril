@@ -22,6 +22,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	_, _, err = pubsub.DeclareAndBind(amqpConnection, routing.ExchangePerilTopic, routing.GameLogSlug, routing.GameLogSlug+".*", pubsub.QueueTypeDurable)
+	if err != nil {
+		log.Fatal(err)
+	}
 	gamelogic.PrintServerHelp()
 	for {
 		userInputs := gamelogic.GetInput()
