@@ -4,8 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+)
+
+type SimpleQueueType int
+
+const (
+	QueueTypeDurable SimpleQueueType = iota
+	QueueTypeTransient
 )
 
 func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
@@ -20,12 +28,29 @@ func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	return nil
 }
 
-type SimpleQueueType int
+func listenForMessages[T any](ch <-chan amqp.Delivery, handler func(T)) {
+	for rawMsg := range ch {
+		var msg T
+		if err := json.Unmarshal(rawMsg.Body, &msg); err != nil {
+			fmt.Fprintln(os.Stderr, "Unable to unmarshall message", rawMsg, err)
+		}
+		handler(msg)
+		rawMsg.Ack(false)
+	}
+}
 
-const (
-	QueueTypeDurable SimpleQueueType = iota
-	QueueTypeTransient
-)
+func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType, handler func(T)) error {
+	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
+	if err != nil {
+		return err
+	}
+	deliveryCh, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+	go listenForMessages(deliveryCh, handler)
+	return nil
+}
 
 func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType) (*amqp.Channel, amqp.Queue, error) {
 	ch, err := conn.Channel()
