@@ -13,20 +13,39 @@ import (
 
 const amqpConnectionString = "amqp://guest:guest@localhost:5672/"
 
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
+	return func(state routing.PlayingState) {
+		defer fmt.Print("> ")
+		gs.HandlePause(state)
+	}
+}
+
+func handleMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) {
+	return func(move gamelogic.ArmyMove) {
+		defer fmt.Print("> ")
+		gs.HandleMove(move)
+	}
+}
+
 func main() {
 	conn, err := amqp091.Dial(amqpConnectionString)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer conn.Close()
+	channel, err := conn.Channel()
+	if err != nil {
+	}
 	fmt.Println("Starting Peril client...")
 	username, err := gamelogic.ClientWelcome()
 	if err != nil {
 		log.Fatal(err)
 	}
 	pauseQueueName := routing.PauseKey + "." + username
-	pubsub.DeclareAndBind(conn, routing.ExchangePerilDirect, pauseQueueName, routing.PauseKey, pubsub.QueueTypeTransient)
+	armyMovesQueueName := routing.ArmyMovesPrefix + "." + username
 	gameState := gamelogic.NewGameState(username)
+	pubsub.SubscribeJSON(conn, routing.ExchangePerilDirect, pauseQueueName, routing.PauseKey, pubsub.QueueTypeTransient, handlerPause(gameState))
+	pubsub.SubscribeJSON(conn, routing.ExchangePerilTopic, armyMovesQueueName, routing.ArmyMovesPrefix+".*", pubsub.QueueTypeTransient, handleMove(gameState))
 	for {
 		userInput := gamelogic.GetInput()
 		if len(userInput) == 0 {
@@ -39,9 +58,11 @@ func main() {
 				continue
 			}
 		case "move":
-			if _, err := gameState.CommandMove(userInput); err != nil {
+			if move, err := gameState.CommandMove(userInput); err != nil {
 				fmt.Fprintf(os.Stderr, "failed to move troup %v", err)
 				continue
+			} else {
+				pubsub.PublishJSON(channel, routing.ExchangePerilTopic, armyMovesQueueName, move)
 			}
 		case "help":
 			gamelogic.PrintClientHelp()
